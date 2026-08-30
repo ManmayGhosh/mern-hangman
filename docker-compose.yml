@@ -1,0 +1,34 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: hangman-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017" # remove/comment in production if you don't need external DB access
+
+  backend:
+    build: ./backend
+    container_name: hangman-backend
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      PORT: 5000
+      MONGO_URI: mongodb://mongo:27017/hangman
+      CLIENT_URL: http://localhost:8080
+    ports:
+      - "5000:5000" # exposed directly too, handy for debugging via curl
+
+  frontend:
+    build: ./frontend
+    container_name: hangman-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  mongo_data:
