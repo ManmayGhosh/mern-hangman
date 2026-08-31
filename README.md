@@ -2,6 +2,9 @@
 
 Full MERN rewrite of the static hangman game: React/Vite frontend, Express API, MongoDB for game sessions + a persistent leaderboard, and words pulled from a real system dictionary instead of a fixed 20-word list.
 
+**[Live demo](https://mern-hangman-frontend.onrender.com/)**
+---
+
 Frontend and backend are **separate services** — separate containers, separate deploys, separate scaling — so you can update or redeploy one without touching the other.
 
 ## Where the words come from (and why this changed)
