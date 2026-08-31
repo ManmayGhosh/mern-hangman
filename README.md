@@ -14,14 +14,19 @@ Now the backend reads directly from the OS's own English dictionary:
 
 Check `GET /api/health` after deploying — it reports `wordSource` (the dictionary path in use, or `"embedded fallback list"`) and `wordPoolSize`, so you can confirm which one is active at a glance.
 
-## How the frontend finds the backend (the part that used to break)
+## How the frontend finds the backend (the part that used to break — twice)
 
-The frontend doesn't have a backend URL baked into it at build time. Instead, every time its container **starts**, `docker-entrypoint.sh` writes a tiny `env-config.js` file based on the `BACKEND_URL` environment variable:
+The frontend doesn't have a backend URL baked into it at build time. Instead, every time its container **starts**, `docker-entrypoint.sh` reads the `BACKEND_URL` environment variable and does two things based on it — because it turned out one wasn't enough.
 
-- **`BACKEND_URL` unset** → frontend calls the relative path `/api`, which `nginx.conf` proxies to a service literally named `backend` on the network. This is the Docker Compose case — the hostname `backend` only resolves inside that shared network, so this only works when both containers are started together via `docker compose up`.
-- **`BACKEND_URL` set** (e.g. `https://hangman-backend-xxxx.onrender.com/api`) → the frontend calls that URL directly, skipping the proxy entirely. This is the Render case, or any setup where the two services don't share a network and each gets its own public URL.
+**1. Writes `env-config.js`**, which the frontend JS reads on page load to know where to send API calls:
+- **`BACKEND_URL` unset** → `API_URL` becomes the relative path `/api`.
+- **`BACKEND_URL` set** (e.g. `https://hangman-backend-xxxx.onrender.com/api`) → the frontend calls that URL directly from the browser.
 
-The same built Docker image works in both cases — you're setting an environment variable on the *container*, not rebuilding the image. That's the key difference from before: `VITE_API_URL` was baked in by Vite at build time, so changing it meant rebuilding; `BACKEND_URL` here is read fresh every time the container boots.
+**2. Picks which nginx config to use** — this is the part that broke on Render even with (1) working correctly. nginx resolves every `proxy_pass` hostname **at startup**, not per-request. A single config that unconditionally proxies `/api/` to a service named `backend` will crash nginx entirely wherever that hostname doesn't exist — which is everywhere except Docker Compose — regardless of whether `BACKEND_URL` was set correctly, because nginx never even gets far enough to serve a request. So there are two full nginx configs in `nginx-templates/`, and the entrypoint copies the right one into place before nginx starts:
+- **`BACKEND_URL` unset** → `with-proxy.conf`, which proxies `/api/` to `backend:5000` (works because Compose's internal network resolves that hostname).
+- **`BACKEND_URL` set** → `no-proxy.conf`, which has no `/api` block at all, since the browser is calling the backend's public URL directly and nginx never needs to touch that traffic.
+
+The same built Docker image works in both cases — you're setting an environment variable on the *container*, not rebuilding the image, and nginx only ever sees a hostname it can actually resolve.
 
 Local frontend development (`npm run dev`) is unaffected by any of this — Vite's dev server proxies `/api` straight to a locally running backend (see `vite.config.js`).
 
@@ -46,8 +51,10 @@ hangman-mern/
     │   ├── App.jsx
     │   └── api.js                 reads window.__APP_CONFIG__.API_URL
     ├── public/env-config.js       local-dev default (overwritten in Docker)
-    ├── docker-entrypoint.sh       writes real env-config.js at container start
-    ├── nginx.conf                 serves the build + proxies /api for Compose
+    ├── nginx-templates/
+    │   ├── with-proxy.conf         used when BACKEND_URL is unset (Compose)
+    │   └── no-proxy.conf           used when BACKEND_URL is set (Render, etc.)
+    ├── docker-entrypoint.sh       picks the nginx config + writes env-config.js
     ├── Dockerfile
     └── vite.config.js             dev-only proxy to a local backend
 ```

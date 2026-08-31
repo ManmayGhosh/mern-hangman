@@ -1,24 +1,39 @@
 #!/bin/sh
 set -e
 
-# Writes a tiny runtime config file the frontend reads on page load.
-# This runs every time the CONTAINER STARTS, not at build time — so the same
-# built image can point at different backends in different environments
-# (Docker Compose vs. Render vs. anywhere else) just by setting BACKEND_URL,
-# with no rebuild required.
+# Runs every time the CONTAINER STARTS (not at build time), doing two things
+# based on the BACKEND_URL environment variable:
 #
-# - Docker Compose: leave BACKEND_URL unset. It falls back to the relative
-#   path "/api", which nginx.conf proxies to the "backend" service on the
-#   internal Compose network.
-# - Render (or any setup with the frontend and backend as separate public
-#   services): set BACKEND_URL to the backend's full public URL plus /api,
-#   e.g. https://hangman-backend-xxxx.onrender.com/api. The frontend will
-#   call that directly, bypassing the nginx proxy entirely.
+#  1. Writes a tiny runtime config the frontend JS reads on page load, so it
+#     knows where to send API calls.
+#  2. Picks which nginx server config to use — critical because nginx
+#     resolves every proxy_pass hostname at STARTUP. A config that
+#     unconditionally proxies to "backend" (the Docker Compose hostname)
+#     would crash nginx entirely on platforms like Render, where that
+#     hostname doesn't exist — even though no request would ever hit it.
+#
+# - BACKEND_URL unset (Docker Compose): frontend calls relative "/api",
+#   proxied by nginx to the "backend" service on the internal Compose
+#   network. Uses nginx-templates/with-proxy.conf.
+# - BACKEND_URL set (e.g. Render, pointing at a separate public backend
+#   service): frontend calls that URL directly from the browser, bypassing
+#   nginx entirely for API calls. Uses nginx-templates/no-proxy.conf, so
+#   nginx never even tries to resolve "backend".
 
-TARGET=/usr/share/nginx/html/env-config.js
+CONFIG_JS=/usr/share/nginx/html/env-config.js
+NGINX_CONF=/etc/nginx/conf.d/default.conf
+TEMPLATES_DIR=/etc/nginx/conf-templates
+
 API_URL="${BACKEND_URL:-/api}"
-
-echo "window.__APP_CONFIG__ = { API_URL: \"${API_URL}\" };" > "$TARGET"
+echo "window.__APP_CONFIG__ = { API_URL: \"${API_URL}\" };" > "$CONFIG_JS"
 echo "[entrypoint] API_URL set to: ${API_URL}"
+
+if [ -n "$BACKEND_URL" ]; then
+  cp "$TEMPLATES_DIR/no-proxy.conf" "$NGINX_CONF"
+  echo "[entrypoint] Using no-proxy nginx config (BACKEND_URL is set)."
+else
+  cp "$TEMPLATES_DIR/with-proxy.conf" "$NGINX_CONF"
+  echo "[entrypoint] Using Compose-proxy nginx config (BACKEND_URL is unset)."
+fi
 
 exec "$@"

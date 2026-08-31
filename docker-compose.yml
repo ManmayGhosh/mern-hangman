@@ -27,9 +27,11 @@ services:
     depends_on:
       - backend
     # No BACKEND_URL set here on purpose: it defaults to the relative "/api"
-    # path, which nginx.conf proxies to the "backend" service by its Compose
-    # network hostname. Set BACKEND_URL only when frontend and backend won't
-    # share a Docker network (e.g. deploying each to a separate Render service).
+    # path, which the frontend's nginx (using nginx-templates/with-proxy.conf,
+    # selected automatically since BACKEND_URL is unset) proxies to the
+    # "backend" service by its Compose network hostname. Set BACKEND_URL only
+    # when frontend and backend won't share a Docker network (e.g. deploying
+    # each to a separate Render service).
     ports:
       - "8080:80"
 
