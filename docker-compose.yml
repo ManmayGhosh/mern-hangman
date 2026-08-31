@@ -17,7 +17,6 @@ services:
     environment:
       PORT: 5000
       MONGO_URI: mongodb://mongo:27017/hangman
-      CLIENT_URL: http://localhost:8080
     ports:
       - "5000:5000" # exposed directly too, handy for debugging via curl
 
@@ -27,6 +26,10 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # No BACKEND_URL set here on purpose: it defaults to the relative "/api"
+    # path, which nginx.conf proxies to the "backend" service by its Compose
+    # network hostname. Set BACKEND_URL only when frontend and backend won't
+    # share a Docker network (e.g. deploying each to a separate Render service).
     ports:
       - "8080:80"
 

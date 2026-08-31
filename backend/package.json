@@ -14,8 +14,7 @@
     "express": "^4.19.2",
     "mongoose": "^8.5.0",
     "node-fetch": "^2.7.0",
-    "uuid": "^9.0.1",
-    "word-list": "^4.0.0"
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

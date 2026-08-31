@@ -1,6 +1,11 @@
-// Base URL is injected at build time via Vite env var; falls back to same-origin
-// /api, which works when nginx proxies /api to the backend in production.
-const BASE_URL = import.meta.env.VITE_API_URL || '/api';
+// The actual value is written into /env-config.js by docker-entrypoint.sh
+// EVERY TIME THE CONTAINER STARTS (not at build time). That means the same
+// built image can point at a different backend in different environments —
+// Docker Compose vs. Render vs. anywhere else — just by setting the
+// BACKEND_URL environment variable on the container, no rebuild needed.
+// Falls back to the relative "/api" path (proxied by nginx.conf) if the
+// config file is missing, e.g. during local `vite dev`.
+const BASE_URL = window.__APP_CONFIG__?.API_URL || '/api';
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {

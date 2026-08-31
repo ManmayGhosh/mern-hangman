@@ -1,34 +1,55 @@
 # Chalkboard Hangman — MERN Edition
 
-Full MERN rewrite of the static hangman game: React/Vite frontend, Express API, MongoDB for game sessions + a persistent leaderboard, and a real dictionary of ~275,000 English words instead of a fixed list.
+Full MERN rewrite of the static hangman game: React/Vite frontend, Express API, MongoDB for game sessions + a persistent leaderboard, and words pulled from a real system dictionary instead of a fixed 20-word list.
 
-## What changed from the static version
-- **Random words from a full dictionary** — the backend loads the [`word-list`](https://www.npmjs.com/package/word-list) npm package (a well-known offline English word list) at startup, filters it to playable lengths (4–11 letters), and picks randomly. No more repeating the same 20 words.
-- **Server-authoritative game state** — the actual word never reaches the browser until the game ends. The frontend only ever sees a masked version, so it's not crackable via devtools.
-- **MongoDB-backed sessions** — each game is a `GameSession` document; sessions auto-expire after 24h.
-- **Persistent leaderboard** — wins, losses, current streak, and best streak per player name, stored in MongoDB and shown live in the UI.
-- **Optional live hints** — on request, the backend fetches a real definition from the free [dictionaryapi.dev](https://dictionaryapi.dev) API and caches it on the session; falls back gracefully if the word isn't found or the API is unreachable.
+Frontend and backend are **separate services** — separate containers, separate deploys, separate scaling — so you can update or redeploy one without touching the other.
 
-## Architecture
+## Where the words come from (and why this changed)
+
+An earlier version used the `word-list` npm package. Its export format turned out to vary across installed versions and crashed the backend at startup in some environments (`Cannot convert object to primitive value` in `fs.readFileSync`) — an npm dependency for something this simple wasn't worth the fragility.
+
+Now the backend reads directly from the OS's own English dictionary:
+- **In Docker** — `backend/Dockerfile` installs `wamerican-large` via `apt-get`, a standard Debian package providing a large, real word list at a fixed system path. No npm package, no version drift, no network call at runtime.
+- **Outside Docker** (e.g. running `npm run dev` locally on a machine without that system package) — falls back automatically to `backend/data/fallbackWords.js`, a ~1,100-word list bundled directly in the repo. Smaller, but zero dependencies and it never crashes.
+
+Check `GET /api/health` after deploying — it reports `wordSource` (the dictionary path in use, or `"embedded fallback list"`) and `wordPoolSize`, so you can confirm which one is active at a glance.
+
+## How the frontend finds the backend (the part that used to break)
+
+The frontend doesn't have a backend URL baked into it at build time. Instead, every time its container **starts**, `docker-entrypoint.sh` writes a tiny `env-config.js` file based on the `BACKEND_URL` environment variable:
+
+- **`BACKEND_URL` unset** → frontend calls the relative path `/api`, which `nginx.conf` proxies to a service literally named `backend` on the network. This is the Docker Compose case — the hostname `backend` only resolves inside that shared network, so this only works when both containers are started together via `docker compose up`.
+- **`BACKEND_URL` set** (e.g. `https://hangman-backend-xxxx.onrender.com/api`) → the frontend calls that URL directly, skipping the proxy entirely. This is the Render case, or any setup where the two services don't share a network and each gets its own public URL.
+
+The same built Docker image works in both cases — you're setting an environment variable on the *container*, not rebuilding the image. That's the key difference from before: `VITE_API_URL` was baked in by Vite at build time, so changing it meant rebuilding; `BACKEND_URL` here is read fresh every time the container boots.
+
+Local frontend development (`npm run dev`) is unaffected by any of this — Vite's dev server proxies `/api` straight to a locally running backend (see `vite.config.js`).
+
+## Project structure
 ```
 hangman-mern/
-├── backend/                 Express API + MongoDB models
+├── docker-compose.yml         mongo + backend + frontend, three services
+├── backend/
 │   ├── src/
-│   │   ├── config/db.js       Mongo connection
-│   │   ├── models/            GameSession, Leaderboard (Mongoose schemas)
-│   │   ├── routes/            /api/games, /api/leaderboard
-│   │   └── utils/              wordBank.js (dictionary loader), hintFetcher.js
+│   │   ├── config/db.js         Mongo connection
+│   │   ├── models/               GameSession, Leaderboard (Mongoose schemas)
+│   │   ├── routes/               /api/games, /api/leaderboard
+│   │   └── utils/                 wordBank.js (dictionary loader), hintFetcher.js
+│   ├── data/fallbackWords.js     embedded backup word list (no system dictionary)
+│   ├── src/app.js                Express app, CORS defaults to allow any origin
 │   ├── server.js
-│   └── Dockerfile
-├── frontend/                 React + Vite SPA
-│   ├── src/
-│   │   ├── components/        Gallows, WordRow, Keyboard, Leaderboard
-│   │   ├── App.jsx
-│   │   └── api.js              fetch wrapper
-│   ├── nginx.conf              serves build + proxies /api to backend
-│   └── Dockerfile              multi-stage: vite build -> nginx
-├── docker-compose.yml         mongo + backend + frontend
-└── README.md
+│   ├── Dockerfile                installs wamerican-large via apt
+│   └── .env.example
+└── frontend/                  React + Vite SPA
+    ├── src/
+    │   ├── components/          Gallows, WordRow, Keyboard, Leaderboard
+    │   ├── App.jsx
+    │   └── api.js                 reads window.__APP_CONFIG__.API_URL
+    ├── public/env-config.js       local-dev default (overwritten in Docker)
+    ├── docker-entrypoint.sh       writes real env-config.js at container start
+    ├── nginx.conf                 serves the build + proxies /api for Compose
+    ├── Dockerfile
+    └── vite.config.js             dev-only proxy to a local backend
 ```
 
 ## API reference
@@ -50,9 +71,11 @@ docker compose up -d --build
 ```
 - Frontend: **http://localhost:8080**
 - Backend API directly: **http://localhost:5000/api/health**
-- MongoDB: exposed on 27017 for local inspection (remove that port mapping in production)
+- MongoDB: exposed on 27017 for local inspection; remove that port mapping in production.
 
-### Locally without Docker
+No environment variables to set for this path — `BACKEND_URL` is intentionally left unset so the frontend uses the Compose-internal proxy.
+
+### Locally without Docker (for active development)
 Requires Node 20+ and a local or Atlas MongoDB instance.
 
 ```bash
@@ -65,23 +88,28 @@ npm run dev             # nodemon on :5000
 # Frontend (separate terminal)
 cd frontend
 npm install
-npm run dev              # vite dev server on :5173, proxies to :5000 via VITE_API_URL
+npm run dev              # vite dev server on :5173, proxies /api to :5000 automatically
 ```
 
-For local dev, set `VITE_API_URL=http://localhost:5000/api` in a `frontend/.env` file so the dev server talks directly to the backend (the production nginx proxy isn't running in this mode).
+## Deploying to Render (two separate services)
 
-## Deploying
+1. **Backend** → New Web Service → Docker → root directory `backend`.
+   - Set `MONGO_URI` to a MongoDB Atlas connection string (Render doesn't host Mongo).
+   - Once deployed, copy its public URL (e.g. `https://hangman-backend-xxxx.onrender.com`).
 
-**Docker Compose on a VPS** — same pattern as ParkEase: `docker compose up -d --build`, put Caddy in front for HTTPS, point a subdomain at it.
+2. **Frontend** → New Web Service → Docker → root directory `frontend`.
+   - Set `BACKEND_URL` = `https://hangman-backend-xxxx.onrender.com/api` (the backend's URL from step 1, plus `/api`).
+   - Deploy.
 
-**Render** — deploy as two services from the same repo:
-1. **Backend** → Web Service, Docker, root directory `backend`. Add a MongoDB Atlas connection string as `MONGO_URI`.
-2. **Frontend** → Static Site or Web Service (Docker), root directory `frontend`. Set `VITE_API_URL` to your backend's Render URL at build time if you're not using the nginx proxy path.
+That's it — no build-time env var, no "clear cache and rebuild" step. If you ever need to point the frontend at a different backend later (new environment, staging vs. prod, etc.), just change `BACKEND_URL` in the Render dashboard and restart the service — no rebuild needed.
 
-**Managed path (matches ParkEase's production notes)**: MongoDB Atlas (free tier) + Render/Railway for the backend + Netlify/Vercel for the frontend.
+3. **(Optional) Lock down CORS** — once you know the frontend's final URL, set `CLIENT_URL` on the backend service to that exact origin instead of relying on the default (which allows any origin).
+
+## MongoDB Atlas setup
+Free tier at mongodb.com/cloud/atlas. Create a cluster, a database user, and allow network access from `0.0.0.0/0` (Render's outbound IPs aren't static). Copy the `mongodb+srv://...` connection string into `MONGO_URI`.
 
 ## Production hardening checklist
-- Lock `CLIENT_URL` (CORS) down to your actual frontend origin instead of `*`
-- Remove the `27017:27017` port mapping on `mongo` once you don't need direct external access
-- Put the whole stack behind HTTPS (Caddy/Let's Encrypt, or your platform's managed TLS)
-- Consider rate-limiting `/api/games` and `/api/games/:id/guess` if this is publicly exposed, to prevent trivial abuse of the leaderboard
+- Set `CLIENT_URL` on the backend once your frontend's real URL is fixed, instead of leaving CORS open to any origin.
+- Remove the `27017:27017` port mapping on `mongo` once you don't need direct external DB access.
+- Put both services behind HTTPS — automatic on Render, or Caddy/Let's Encrypt if self-hosting.
+- Consider rate-limiting `/api/games` and `/api/games/:id/guess` if this is publicly exposed.

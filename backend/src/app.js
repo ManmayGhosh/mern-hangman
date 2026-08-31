@@ -3,17 +3,20 @@ const cors = require('cors');
 
 const gamesRouter = require('./routes/games');
 const leaderboardRouter = require('./routes/leaderboard');
-const { poolSize } = require('./utils/wordBank');
+const { poolSize, poolSource } = require('./utils/wordBank');
 
 function createApp() {
   const app = express();
 
-  const allowedOrigin = process.env.CLIENT_URL || '*';
-  app.use(cors({ origin: allowedOrigin }));
+  // Defaults to reflecting whatever origin made the request, so a separately
+  // hosted frontend (a different Render service, a different port locally,
+  // etc.) works out of the box. Set CLIENT_URL to lock this down to one
+  // specific origin once you know your production frontend's URL.
+  app.use(cors({ origin: process.env.CLIENT_URL || true }));
   app.use(express.json());
 
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', wordPoolSize: poolSize() });
+    res.json({ status: 'ok', wordPoolSize: poolSize(), wordSource: poolSource() });
   });
 
   app.use('/api/games', gamesRouter);
