@@ -123,3 +123,14 @@ Free tier at mongodb.com/cloud/atlas. Create a cluster, a database user, and all
 - Remove the `27017:27017` port mapping on `mongo` once you don't need direct external DB access.
 - Put both services behind HTTPS — automatic on Render, or Caddy/Let's Encrypt if self-hosting.
 - Consider rate-limiting `/api/games` and `/api/games/:id/guess` if this is publicly exposed.
+
+
+### Chalkboard Hangman — Full-Stack Word Game
+**React (Vite) · Node.js/Express · MongoDB · Docker · Nginx**
+[Live App](https://mern-hangman-frontend.onrender.com) · [GitHub Repo](#)
+
+- Built a full MERN word-guessing game with **server-authoritative game state** — the target word never reaches the client until a round ends, closing off devtools-based cheating that client-side word storage allows
+- Designed a **dual-mode Nginx startup script** that auto-selects between an internal Docker Compose proxy and a direct public backend URL depending on the deployment target, letting one Docker image ship unmodified to both Docker Compose and Render with zero rebuilds
+- Replaced a fragile npm word-list dependency with the **OS-level system dictionary** (installed via `apt` at build time) after diagnosing a cross-version package export bug in production, with an embedded fallback word list guaranteeing the app never crashes for lack of a word source
+- Implemented a **persistent MongoDB leaderboard** (wins, losses, streaks) with TTL-indexed session auto-expiry, plus an on-demand hint feature pulling live word definitions from a public dictionary API
+- Deployed frontend and backend as **independently scalable services** on Render, each with its own Docker build and runtime-configurable API endpoint (no environment-specific rebuilds required)
